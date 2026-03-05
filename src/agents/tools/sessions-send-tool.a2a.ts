@@ -1,4 +1,9 @@
 import crypto from "node:crypto";
+import {
+  isSilentReplyText,
+  SILENT_REPLY_TOKEN,
+  stripSilentToken,
+} from "../../auto-reply/tokens.js";
 import { callGateway } from "../../gateway/call.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
@@ -118,13 +123,22 @@ export async function runSessionsSendA2AFlow(params: {
       sourceChannel: params.requesterChannel,
       sourceTool: "sessions_send",
     });
-    if (announceTarget && announceReply && announceReply.trim() && !isAnnounceSkip(announceReply)) {
+    const normalizedAnnounceReply =
+      typeof announceReply === "string"
+        ? stripSilentToken(announceReply, SILENT_REPLY_TOKEN).trim()
+        : "";
+    if (
+      announceTarget &&
+      normalizedAnnounceReply &&
+      !isSilentReplyText(normalizedAnnounceReply, SILENT_REPLY_TOKEN) &&
+      !isAnnounceSkip(normalizedAnnounceReply)
+    ) {
       try {
         await callGateway({
           method: "send",
           params: {
             to: announceTarget.to,
-            message: announceReply.trim(),
+            message: normalizedAnnounceReply,
             channel: announceTarget.channel,
             accountId: announceTarget.accountId,
             idempotencyKey: crypto.randomUUID(),

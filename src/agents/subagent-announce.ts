@@ -774,6 +774,7 @@ async function sendSubagentAnnounceDirectly(params: {
       typeof completionDirectOrigin?.to === "string" ? completionDirectOrigin.to.trim() : "";
     const hasCompletionDirectTarget =
       !params.requesterIsSubagent && Boolean(completionChannel) && Boolean(completionTo);
+    let suppressExternalTriggerDelivery = false;
 
     if (
       params.expectsCompletionMessage &&
@@ -811,6 +812,7 @@ async function sendSubagentAnnounceDirectly(params: {
         // session routing while sibling or descendant runs are still pending.
         if (pendingDescendantRuns > 0) {
           shouldSendCompletionDirectly = false;
+          suppressExternalTriggerDelivery = true;
         }
       }
 
@@ -861,7 +863,8 @@ async function sendSubagentAnnounceDirectly(params: {
       !params.requesterIsSubagent && Boolean(directChannel) && Boolean(directTo);
     const shouldDeliverExternally =
       !params.requesterIsSubagent &&
-      (!params.expectsCompletionMessage || hasDeliverableDirectTarget);
+      (!params.expectsCompletionMessage || hasDeliverableDirectTarget) &&
+      !suppressExternalTriggerDelivery;
     const threadId =
       directOrigin?.threadId != null && directOrigin.threadId !== ""
         ? String(directOrigin.threadId)
