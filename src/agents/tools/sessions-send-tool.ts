@@ -245,6 +245,9 @@ export function createSessionsSendTool(opts?: {
             displayKey,
           });
       const runA2AAnnounceFlow = allowChannelBoundAnnounce || announceTarget === null;
+      const announceTargetResolution = allowChannelBoundAnnounce
+        ? undefined
+        : ({ kind: "resolved", target: announceTarget } as const);
       const delivery = {
         status: runA2AAnnounceFlow ? ("pending" as const) : ("skipped" as const),
         mode: runA2AAnnounceFlow ? ("announce" as const) : ("none" as const),
@@ -263,6 +266,7 @@ export function createSessionsSendTool(opts?: {
           requesterChannel,
           roundOneReply,
           waitRunId,
+          announceTargetResolution,
         });
       };
 

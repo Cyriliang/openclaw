@@ -12,6 +12,7 @@ import { AGENT_LANE_NESTED } from "../lanes.js";
 import { readLatestAssistantReply, runAgentStep } from "./agent-step.js";
 import { resolveAnnounceTarget } from "./sessions-announce-target.js";
 import {
+  type AnnounceTarget,
   buildAgentToAgentAnnounceContext,
   buildAgentToAgentReplyContext,
   isAnnounceSkip,
@@ -30,6 +31,7 @@ export async function runSessionsSendA2AFlow(params: {
   requesterChannel?: GatewayMessageChannel;
   roundOneReply?: string;
   waitRunId?: string;
+  announceTargetResolution?: { kind: "resolved"; target: AnnounceTarget | null };
 }) {
   const runContextId = params.waitRunId ?? "unknown";
   try {
@@ -56,10 +58,13 @@ export async function runSessionsSendA2AFlow(params: {
       return;
     }
 
-    const announceTarget = await resolveAnnounceTarget({
-      sessionKey: params.targetSessionKey,
-      displayKey: params.displayKey,
-    });
+    const announceTarget =
+      params.announceTargetResolution?.kind === "resolved"
+        ? params.announceTargetResolution.target
+        : await resolveAnnounceTarget({
+            sessionKey: params.targetSessionKey,
+            displayKey: params.displayKey,
+          });
     const targetChannel = announceTarget?.channel ?? "unknown";
 
     if (

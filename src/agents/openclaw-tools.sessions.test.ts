@@ -1002,6 +1002,94 @@ describe("sessions tools", () => {
     expect(announceCall).toBeUndefined();
   });
 
+  it("sessions_send fail-closes when announce target is discovered only after pre-check", async () => {
+    const calls: Array<{ method?: string; params?: unknown }> = [];
+    let agentCallCount = 0;
+    let lastWaitedRunId: string | undefined;
+    let sessionsListCallCount = 0;
+    const replyByRunId = new Map<string, string>();
+
+    callGatewayMock.mockImplementation(async (opts: unknown) => {
+      const request = opts as { method?: string; params?: unknown };
+      calls.push(request);
+      if (request.method === "agent") {
+        agentCallCount += 1;
+        const runId = `run-${agentCallCount}`;
+        const params = request.params as { message?: string } | undefined;
+        const reply = params?.message === "Agent-to-agent announce step." ? "announce now" : "done";
+        replyByRunId.set(runId, reply);
+        return {
+          runId,
+          status: "accepted",
+        };
+      }
+      if (request.method === "agent.wait") {
+        const params = request.params as { runId?: string } | undefined;
+        lastWaitedRunId = params?.runId;
+        return { runId: params?.runId ?? "run-1", status: "ok" };
+      }
+      if (request.method === "chat.history") {
+        const text = (lastWaitedRunId && replyByRunId.get(lastWaitedRunId)) ?? "";
+        return {
+          messages: [{ role: "assistant", content: [{ type: "text", text }], timestamp: 20 }],
+        };
+      }
+      if (request.method === "sessions.list") {
+        sessionsListCallCount += 1;
+        if (sessionsListCallCount === 1) {
+          return { sessions: [] };
+        }
+        return {
+          sessions: [
+            {
+              key: "main",
+              deliveryContext: {
+                channel: "discord",
+                to: "channel:target",
+              },
+            },
+          ],
+        };
+      }
+      if (request.method === "send") {
+        throw new Error(
+          "send should not be called when announce target was unknown during pre-check",
+        );
+      }
+      return {};
+    });
+
+    const tool = createOpenClawTools({
+      agentSessionKey: "discord:group:req",
+      agentChannel: "discord",
+    }).find((candidate) => candidate.name === "sessions_send");
+    expect(tool).toBeDefined();
+    if (!tool) {
+      throw new Error("missing sessions_send tool");
+    }
+
+    const result = await tool.execute("call-fail-closed-unknown", {
+      sessionKey: "main",
+      message: "ping",
+      timeoutSeconds: 1,
+    });
+
+    expect(result.details).toMatchObject({
+      status: "ok",
+      reply: "done",
+      delivery: { status: "pending", mode: "announce" },
+    });
+
+    await waitForCalls(() => calls.filter((call) => call.method === "agent").length, 2);
+    expect(calls.filter((call) => call.method === "sessions.list")).toHaveLength(1);
+    await vi.waitFor(
+      () => {
+        expect(calls.filter((call) => call.method === "send")).toHaveLength(0);
+      },
+      { timeout: 1_000, interval: 5 },
+    );
+  });
+
   it("sessions_send can re-enable channel-bound announce flow and strips NO_REPLY", async () => {
     configOverride.session.agentToAgent = {
       maxPingPongTurns: 0,
