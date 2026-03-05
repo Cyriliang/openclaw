@@ -164,20 +164,3 @@ export function resolvePingPongTurns(cfg?: OpenClawConfig) {
   const rounded = Math.floor(raw);
   return Math.max(0, Math.min(MAX_PING_PONG_TURNS, rounded));
 }
-
-export function shouldRunSessionsSendAnnounceFlow(
-  cfg: OpenClawConfig | undefined,
-  targetSessionKey: string,
-  displayKey?: string,
-): boolean {
-  const keyCandidates = [targetSessionKey, displayKey]
-    .map((value) => (typeof value === "string" ? value.trim() : ""))
-    .filter((value) => value.length > 0);
-  const isChannelBoundSession = keyCandidates.some(
-    (sessionKey) => resolveAnnounceTargetFromKey(sessionKey) !== null,
-  );
-  if (!isChannelBoundSession) {
-    return true;
-  }
-  return cfg?.session?.agentToAgent?.allowChannelBoundAnnounce === true;
-}

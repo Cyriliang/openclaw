@@ -11,6 +11,7 @@ import {
 import { AGENT_LANE_NESTED } from "../lanes.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readStringParam } from "./common.js";
+import { resolveAnnounceTarget } from "./sessions-announce-target.js";
 import {
   createSessionVisibilityGuard,
   createAgentToAgentPolicy,
@@ -21,11 +22,7 @@ import {
   resolveVisibleSessionReference,
   stripToolMessages,
 } from "./sessions-helpers.js";
-import {
-  buildAgentToAgentMessageContext,
-  resolvePingPongTurns,
-  shouldRunSessionsSendAnnounceFlow,
-} from "./sessions-send-helpers.js";
+import { buildAgentToAgentMessageContext, resolvePingPongTurns } from "./sessions-send-helpers.js";
 import { runSessionsSendA2AFlow } from "./sessions-send-tool.a2a.js";
 
 const SessionsSendToolSchema = Type.Object({
@@ -239,9 +236,17 @@ export function createSessionsSendTool(opts?: {
       const requesterSessionKey = opts?.agentSessionKey;
       const requesterChannel = opts?.agentChannel;
       const maxPingPongTurns = resolvePingPongTurns(cfg);
-      const runA2AAnnounceFlow = shouldRunSessionsSendAnnounceFlow(cfg, resolvedKey, displayKey);
+      const allowChannelBoundAnnounce =
+        cfg?.session?.agentToAgent?.allowChannelBoundAnnounce === true;
+      const announceTarget = allowChannelBoundAnnounce
+        ? null
+        : await resolveAnnounceTarget({
+            sessionKey: resolvedKey,
+            displayKey,
+          });
+      const runA2AAnnounceFlow = allowChannelBoundAnnounce || announceTarget === null;
       const delivery = {
-        status: "pending",
+        status: runA2AAnnounceFlow ? ("pending" as const) : ("skipped" as const),
         mode: runA2AAnnounceFlow ? ("announce" as const) : ("none" as const),
       };
       const startA2AFlow = (roundOneReply?: string, waitRunId?: string) => {

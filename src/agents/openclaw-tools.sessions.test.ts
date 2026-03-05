@@ -7,7 +7,23 @@ import {
 } from "./subagent-registry.js";
 
 const callGatewayMock = vi.fn();
-const defaultConfig = {
+type TestConfig = {
+  session: {
+    mainKey: string;
+    scope: "per-sender";
+    agentToAgent: {
+      maxPingPongTurns: number;
+      allowChannelBoundAnnounce?: boolean;
+    };
+  };
+  tools: {
+    sessions: {
+      visibility: "all";
+    };
+  };
+};
+
+const defaultConfig: TestConfig = {
   session: {
     mainKey: "main",
     scope: "per-sender" as const,
@@ -18,7 +34,7 @@ const defaultConfig = {
     sessions: { visibility: "all" as const },
   },
 };
-let configOverride: typeof defaultConfig = defaultConfig;
+let configOverride: TestConfig = defaultConfig;
 vi.mock("../gateway/call.js", () => ({
   callGateway: (opts: unknown) => callGatewayMock(opts),
 }));
@@ -889,8 +905,91 @@ describe("sessions tools", () => {
     expect(result.details).toMatchObject({
       status: "ok",
       reply: "done",
-      delivery: { status: "pending", mode: "none" },
+      delivery: { status: "skipped", mode: "none" },
     });
+    expect(calls.filter((call) => call.method === "agent")).toHaveLength(1);
+    expect(calls.filter((call) => call.method === "agent.wait")).toHaveLength(1);
+    expect(calls.filter((call) => call.method === "chat.history")).toHaveLength(1);
+    const announceCall = calls.find(
+      (call) =>
+        call.method === "agent" &&
+        (call.params as { message?: string } | undefined)?.message ===
+          "Agent-to-agent announce step.",
+    );
+    expect(announceCall).toBeUndefined();
+  });
+
+  it("sessions_send suppresses announce flow when channel target is resolved from delivery context", async () => {
+    const calls: Array<{ method?: string; params?: unknown }> = [];
+    let agentCallCount = 0;
+    let lastWaitedRunId: string | undefined;
+    const replyByRunId = new Map<string, string>();
+
+    callGatewayMock.mockImplementation(async (opts: unknown) => {
+      const request = opts as { method?: string; params?: unknown };
+      calls.push(request);
+      if (request.method === "agent") {
+        agentCallCount += 1;
+        const runId = `run-${agentCallCount}`;
+        const params = request.params as { message?: string } | undefined;
+        const reply = params?.message === "ping" ? "done" : "unexpected";
+        replyByRunId.set(runId, reply);
+        return {
+          runId,
+          status: "accepted",
+        };
+      }
+      if (request.method === "agent.wait") {
+        const params = request.params as { runId?: string } | undefined;
+        lastWaitedRunId = params?.runId;
+        return { runId: params?.runId ?? "run-1", status: "ok" };
+      }
+      if (request.method === "chat.history") {
+        const text = (lastWaitedRunId && replyByRunId.get(lastWaitedRunId)) ?? "";
+        return {
+          messages: [{ role: "assistant", content: [{ type: "text", text }], timestamp: 20 }],
+        };
+      }
+      if (request.method === "sessions.list") {
+        return {
+          sessions: [
+            {
+              key: "main",
+              deliveryContext: {
+                channel: "discord",
+                to: "channel:target",
+              },
+            },
+          ],
+        };
+      }
+      if (request.method === "send") {
+        throw new Error("send should not be called when announce flow is suppressed");
+      }
+      return {};
+    });
+
+    const tool = createOpenClawTools({
+      agentSessionKey: "discord:group:req",
+      agentChannel: "discord",
+    }).find((candidate) => candidate.name === "sessions_send");
+    expect(tool).toBeDefined();
+    if (!tool) {
+      throw new Error("missing sessions_send tool");
+    }
+
+    const result = await tool.execute("call-delivery-context-default", {
+      sessionKey: "main",
+      message: "ping",
+      timeoutSeconds: 1,
+    });
+
+    expect(result.details).toMatchObject({
+      status: "ok",
+      reply: "done",
+      delivery: { status: "skipped", mode: "none" },
+    });
+    expect(calls.filter((call) => call.method === "sessions.list")).toHaveLength(1);
     expect(calls.filter((call) => call.method === "agent")).toHaveLength(1);
     expect(calls.filter((call) => call.method === "agent.wait")).toHaveLength(1);
     expect(calls.filter((call) => call.method === "chat.history")).toHaveLength(1);
