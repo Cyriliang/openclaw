@@ -66,12 +66,16 @@ export async function runSessionsSendA2AFlow(params: {
             sessionKey: params.targetSessionKey,
             displayKey: params.displayKey,
           });
-    const optInFallbackTarget =
+    const parsedOptInTarget = params.allowChannelBoundAnnounce
+      ? resolveAnnounceTargetFromKey(params.targetSessionKey)
+      : null;
+    const shouldUseOptInParsedTarget =
       params.allowChannelBoundAnnounce &&
-      announceTargetDecision?.kind === "unknown" &&
-      (announceTargetDecision.reason === "miss" || announceTargetDecision.reason === "error")
-        ? resolveAnnounceTargetFromKey(params.targetSessionKey)
-        : null;
+      parsedOptInTarget &&
+      (announceTargetDecision?.kind === "no_external_target" ||
+        (announceTargetDecision?.kind === "unknown" &&
+          (announceTargetDecision.reason === "miss" || announceTargetDecision.reason === "error")));
+    const optInFallbackTarget = shouldUseOptInParsedTarget ? parsedOptInTarget : null;
     const announceTarget =
       announceTargetDecision?.kind === "external_target"
         ? announceTargetDecision.target
