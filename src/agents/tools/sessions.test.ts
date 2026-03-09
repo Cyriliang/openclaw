@@ -288,7 +288,7 @@ describe("resolveAnnounceTarget", () => {
     expect(callGatewayMock).toHaveBeenCalledTimes(1);
   });
 
-  it("returns unknown when sessions.list misses and only display-key shape is suggestive", async () => {
+  it("returns unknown with miss reason when sessions.list misses and only display-key shape is suggestive", async () => {
     callGatewayMock.mockResolvedValueOnce({
       sessions: [],
     });
@@ -298,13 +298,29 @@ describe("resolveAnnounceTarget", () => {
       displayKey: "discord:group:dev",
     });
 
-    expect(target).toEqual({ kind: "unknown" });
+    expect(target).toEqual({ kind: "unknown", reason: "miss" });
     expect(callGatewayMock).toHaveBeenCalledTimes(1);
     const first = callGatewayMock.mock.calls[0]?.[0] as { method?: string } | undefined;
     expect(first?.method).toBe("sessions.list");
   });
 
-  it("returns unknown when sessions.list errors and no safe fallback exists", async () => {
+  it("returns unknown with partial reason when sessions.list has only partial routing data", async () => {
+    callGatewayMock.mockResolvedValueOnce({
+      sessions: [{ key: "whatsapp:group:dev", lastChannel: "whatsapp" }],
+    });
+
+    const target = await resolveAnnounceTarget({
+      sessionKey: "whatsapp:group:dev",
+      displayKey: "whatsapp:group:dev",
+    });
+
+    expect(target).toEqual({ kind: "unknown", reason: "partial" });
+    expect(callGatewayMock).toHaveBeenCalledTimes(1);
+    const first = callGatewayMock.mock.calls[0]?.[0] as { method?: string } | undefined;
+    expect(first?.method).toBe("sessions.list");
+  });
+
+  it("returns unknown with error reason when sessions.list errors and no safe fallback exists", async () => {
     callGatewayMock.mockRejectedValueOnce(new Error("gateway down"));
 
     const target = await resolveAnnounceTarget({
@@ -312,7 +328,7 @@ describe("resolveAnnounceTarget", () => {
       displayKey: "main",
     });
 
-    expect(target).toEqual({ kind: "unknown" });
+    expect(target).toEqual({ kind: "unknown", reason: "error" });
     expect(callGatewayMock).toHaveBeenCalledTimes(1);
     const first = callGatewayMock.mock.calls[0]?.[0] as { method?: string } | undefined;
     expect(first?.method).toBe("sessions.list");

@@ -7,7 +7,7 @@ import { resolveAnnounceTargetFromKey } from "./sessions-send-helpers.js";
 export type AnnounceTargetDecision =
   | { kind: "external_target"; target: AnnounceTarget }
   | { kind: "no_external_target" }
-  | { kind: "unknown" };
+  | { kind: "unknown"; reason: "miss" | "partial" | "error" };
 
 export async function resolveAnnounceTarget(params: {
   sessionKey: string;
@@ -37,7 +37,7 @@ export async function resolveAnnounceTarget(params: {
       sessions.find((entry) => entry?.key === params.sessionKey) ??
       sessions.find((entry) => entry?.key === params.displayKey);
     if (!match) {
-      return { kind: "unknown" };
+      return { kind: "unknown", reason: "miss" };
     }
 
     const deliveryContext =
@@ -58,10 +58,10 @@ export async function resolveAnnounceTarget(params: {
     }
     if (channel || to || accountId) {
       // Partial routing data is inconclusive, so fail closed instead of assuming internal-only.
-      return { kind: "unknown" };
+      return { kind: "unknown", reason: "partial" };
     }
     return { kind: "no_external_target" };
   } catch {
-    return { kind: "unknown" };
+    return { kind: "unknown", reason: "error" };
   }
 }

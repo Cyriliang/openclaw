@@ -268,6 +268,7 @@ export function createSessionsSendTool(opts?: {
           roundOneReply,
           waitRunId,
           announceTargetResolution,
+          allowChannelBoundAnnounce,
         });
       };
 

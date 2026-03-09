@@ -16,6 +16,7 @@ import {
   buildAgentToAgentReplyContext,
   isAnnounceSkip,
   isReplySkip,
+  resolveAnnounceTargetFromKey,
 } from "./sessions-send-helpers.js";
 
 const log = createSubsystemLogger("agents/sessions-send");
@@ -31,6 +32,7 @@ export async function runSessionsSendA2AFlow(params: {
   roundOneReply?: string;
   waitRunId?: string;
   announceTargetResolution?: { kind: "resolved"; decision: AnnounceTargetDecision | null };
+  allowChannelBoundAnnounce?: boolean;
 }) {
   const runContextId = params.waitRunId ?? "unknown";
   try {
@@ -64,8 +66,16 @@ export async function runSessionsSendA2AFlow(params: {
             sessionKey: params.targetSessionKey,
             displayKey: params.displayKey,
           });
+    const optInFallbackTarget =
+      params.allowChannelBoundAnnounce &&
+      announceTargetDecision?.kind === "unknown" &&
+      (announceTargetDecision.reason === "miss" || announceTargetDecision.reason === "error")
+        ? resolveAnnounceTargetFromKey(params.targetSessionKey)
+        : null;
     const announceTarget =
-      announceTargetDecision?.kind === "external_target" ? announceTargetDecision.target : null;
+      announceTargetDecision?.kind === "external_target"
+        ? announceTargetDecision.target
+        : optInFallbackTarget;
     const targetChannel = announceTarget?.channel ?? "unknown";
 
     if (
