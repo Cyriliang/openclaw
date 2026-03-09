@@ -417,15 +417,17 @@ export function createSessionsSendTool(opts?: {
       const filtered = stripToolMessages(Array.isArray(history?.messages) ? history.messages : []);
       const last = filtered.length > 0 ? filtered[filtered.length - 1] : undefined;
       const reply = last ? extractAssistantText(last) : undefined;
-      const announceTargetDecision = allowChannelBoundAnnounce
+      const settledDecision = allowChannelBoundAnnounce
         ? null
-        : await announceTargetDecisionTask?.promise;
-      const { runA2AAnnounceFlow, delivery } = resolveAnnounceDelivery(
-        announceTargetDecision ?? null,
-      );
-      if (runA2AAnnounceFlow) {
-        launchA2AFlow(reply ?? undefined, undefined, announceTargetDecision ?? null);
-      }
+        : (announceTargetDecisionTask?.getSettledDecision() ?? undefined);
+      const delivery =
+        allowChannelBoundAnnounce || settledDecision !== undefined
+          ? resolveAnnounceDelivery(settledDecision ?? null).delivery
+          : {
+              status: "pending" as const,
+              mode: "announce" as const,
+            };
+      scheduleA2AFlow(reply ?? undefined, undefined);
 
       return jsonResult({
         runId,
