@@ -238,16 +238,17 @@ export function createSessionsSendTool(opts?: {
       const maxPingPongTurns = resolvePingPongTurns(cfg);
       const allowChannelBoundAnnounce =
         cfg?.session?.agentToAgent?.allowChannelBoundAnnounce === true;
-      const announceTarget = allowChannelBoundAnnounce
+      const announceTargetDecision = allowChannelBoundAnnounce
         ? null
         : await resolveAnnounceTarget({
             sessionKey: resolvedKey,
             displayKey,
           });
-      const runA2AAnnounceFlow = allowChannelBoundAnnounce || announceTarget === null;
+      const runA2AAnnounceFlow =
+        allowChannelBoundAnnounce || announceTargetDecision?.kind === "no_external_target";
       const announceTargetResolution = allowChannelBoundAnnounce
         ? undefined
-        : ({ kind: "resolved", target: announceTarget } as const);
+        : ({ kind: "resolved", decision: announceTargetDecision } as const);
       const delivery = {
         status: runA2AAnnounceFlow ? ("pending" as const) : ("skipped" as const),
         mode: runA2AAnnounceFlow ? ("announce" as const) : ("none" as const),

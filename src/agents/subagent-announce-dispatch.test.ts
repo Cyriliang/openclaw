@@ -3,6 +3,7 @@ import {
   mapQueueOutcomeToDeliveryResult,
   runSubagentAnnounceDispatch,
 } from "./subagent-announce-dispatch.js";
+import { __testing as subagentAnnounceTesting } from "./subagent-announce.js";
 
 describe("mapQueueOutcomeToDeliveryResult", () => {
   it("maps steered to delivered", () => {
@@ -155,5 +156,94 @@ describe("runSubagentAnnounceDispatch", () => {
       path: "none",
       phases: [],
     });
+  });
+
+  it("plans pending non-bound completion delivery as agent_internal_only", async () => {
+    const plan = await subagentAnnounceTesting.buildSubagentDirectDeliveryPlan({
+      targetRequesterSessionKey: "agent:main:main",
+      expectsCompletionMessage: true,
+      requesterIsSubagent: false,
+      completionDirectOrigin: { channel: "discord", to: "channel:12345", accountId: "acct-1" },
+      completionRouteMode: "fallback",
+      currentRunId: "run-child-1",
+      countPendingDescendantRuns: vi.fn(() => 9),
+      countPendingDescendantRunsExcludingRun: vi.fn(() => 1),
+    });
+
+    expect(plan).toEqual({
+      kind: "agent_internal_only",
+      origin: { channel: "discord", to: "channel:12345", accountId: "acct-1" },
+    });
+  });
+
+  it("keeps bound completion delivery external even when siblings are still pending", async () => {
+    const excludeCurrentRun = vi.fn(() => 2);
+
+    const plan = await subagentAnnounceTesting.buildSubagentDirectDeliveryPlan({
+      targetRequesterSessionKey: "agent:main:main",
+      expectsCompletionMessage: true,
+      requesterIsSubagent: false,
+      completionDirectOrigin: {
+        channel: "discord",
+        to: "channel:thread-bound-1",
+        accountId: "acct-1",
+      },
+      completionMessage: "bound final answer",
+      completionRouteMode: "bound",
+      spawnMode: "session",
+      currentRunId: "run-child-2",
+      countPendingDescendantRuns: vi.fn(() => 5),
+      countPendingDescendantRunsExcludingRun: excludeCurrentRun,
+    });
+
+    expect(excludeCurrentRun).toHaveBeenCalledWith("agent:main:main", "run-child-2");
+    expect(plan).toEqual({
+      kind: "agent_external",
+      origin: {
+        channel: "discord",
+        to: "channel:thread-bound-1",
+        accountId: "acct-1",
+      },
+    });
+  });
+
+  it("keeps completion direct-send reachable once descendants are settled", async () => {
+    const excludeCurrentRun = vi.fn(() => 0);
+
+    const plan = await subagentAnnounceTesting.buildSubagentDirectDeliveryPlan({
+      targetRequesterSessionKey: "agent:main:main",
+      expectsCompletionMessage: true,
+      requesterIsSubagent: false,
+      completionDirectOrigin: { channel: "discord", to: "channel:12345", accountId: "acct-1" },
+      completionMessage: "final answer: 2",
+      completionRouteMode: "fallback",
+      currentRunId: "run-child-3",
+      countPendingDescendantRuns: vi.fn(() => 7),
+      countPendingDescendantRunsExcludingRun: excludeCurrentRun,
+    });
+
+    expect(excludeCurrentRun).toHaveBeenCalledWith("agent:main:main", "run-child-3");
+    expect(plan).toEqual({
+      kind: "completion_direct_send",
+      target: { channel: "discord", to: "channel:12345", accountId: "acct-1" },
+      message: "final answer: 2",
+    });
+  });
+
+  it("canonicalizes requester key before descendant counting", async () => {
+    const excludeCurrentRun = vi.fn(() => 1);
+
+    await subagentAnnounceTesting.buildSubagentDirectDeliveryPlan({
+      targetRequesterSessionKey: "main",
+      expectsCompletionMessage: true,
+      requesterIsSubagent: false,
+      completionDirectOrigin: { channel: "discord", to: "channel:12345", accountId: "acct-1" },
+      completionRouteMode: "fallback",
+      currentRunId: "run-child-4",
+      countPendingDescendantRuns: vi.fn(() => 9),
+      countPendingDescendantRunsExcludingRun: excludeCurrentRun,
+    });
+
+    expect(excludeCurrentRun).toHaveBeenCalledWith("agent:main:main", "run-child-4");
   });
 });

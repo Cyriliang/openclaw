@@ -592,6 +592,11 @@ describe("sessions tools", () => {
           ],
         };
       }
+      if (request.method === "sessions.list") {
+        return {
+          sessions: [{ key: "main", displayName: "main" }],
+        };
+      }
       if (request.method === "send") {
         sendCallCount += 1;
         return { messageId: "m1" };
@@ -1002,7 +1007,7 @@ describe("sessions tools", () => {
     expect(announceCall).toBeUndefined();
   });
 
-  it("sessions_send fail-closes when announce target is discovered only after pre-check", async () => {
+  it("sessions_send skips announce flow when announce target classification is unknown", async () => {
     const calls: Array<{ method?: string; params?: unknown }> = [];
     let agentCallCount = 0;
     let lastWaitedRunId: string | undefined;
@@ -1077,17 +1082,98 @@ describe("sessions tools", () => {
     expect(result.details).toMatchObject({
       status: "ok",
       reply: "done",
+      delivery: { status: "skipped", mode: "none" },
+    });
+    expect(calls.filter((call) => call.method === "sessions.list")).toHaveLength(1);
+
+    const announceCall = calls.find(
+      (call) =>
+        call.method === "agent" &&
+        (call.params as { message?: string } | undefined)?.message ===
+          "Agent-to-agent announce step.",
+    );
+    expect(announceCall).toBeUndefined();
+    expect(calls.filter((call) => call.method === "send")).toHaveLength(0);
+  });
+
+  it("sessions_send keeps no_external_target announce flow internal only", async () => {
+    configOverride.session.agentToAgent = {
+      ...configOverride.session.agentToAgent,
+      maxPingPongTurns: 0,
+    };
+    const calls: Array<{ method?: string; params?: unknown }> = [];
+    let agentCallCount = 0;
+    let lastWaitedRunId: string | undefined;
+    const replyByRunId = new Map<string, string>();
+
+    callGatewayMock.mockImplementation(async (opts: unknown) => {
+      const request = opts as { method?: string; params?: unknown };
+      calls.push(request);
+      if (request.method === "agent") {
+        agentCallCount += 1;
+        const runId = `run-${agentCallCount}`;
+        const params = request.params as { message?: string } | undefined;
+        const reply = params?.message === "Agent-to-agent announce step." ? "announce now" : "done";
+        replyByRunId.set(runId, reply);
+        return {
+          runId,
+          status: "accepted",
+        };
+      }
+      if (request.method === "agent.wait") {
+        const params = request.params as { runId?: string } | undefined;
+        lastWaitedRunId = params?.runId;
+        return { runId: params?.runId ?? "run-1", status: "ok" };
+      }
+      if (request.method === "chat.history") {
+        const text = (lastWaitedRunId && replyByRunId.get(lastWaitedRunId)) ?? "";
+        return {
+          messages: [{ role: "assistant", content: [{ type: "text", text }], timestamp: 20 }],
+        };
+      }
+      if (request.method === "sessions.list") {
+        return {
+          sessions: [{ key: "main", displayName: "main" }],
+        };
+      }
+      if (request.method === "send") {
+        throw new Error("send should not be called for no_external_target sessions");
+      }
+      return {};
+    });
+
+    const tool = createOpenClawTools({
+      agentSessionKey: "discord:group:req",
+      agentChannel: "discord",
+    }).find((candidate) => candidate.name === "sessions_send");
+    expect(tool).toBeDefined();
+    if (!tool) {
+      throw new Error("missing sessions_send tool");
+    }
+
+    const result = await tool.execute("call-no-external-target", {
+      sessionKey: "main",
+      message: "ping",
+      timeoutSeconds: 1,
+    });
+
+    expect(result.details).toMatchObject({
+      status: "ok",
+      reply: "done",
       delivery: { status: "pending", mode: "announce" },
     });
 
     await waitForCalls(() => calls.filter((call) => call.method === "agent").length, 2);
     expect(calls.filter((call) => call.method === "sessions.list")).toHaveLength(1);
-    await vi.waitFor(
-      () => {
-        expect(calls.filter((call) => call.method === "send")).toHaveLength(0);
-      },
-      { timeout: 1_000, interval: 5 },
+    expect(calls.filter((call) => call.method === "send")).toHaveLength(0);
+
+    const announceCall = calls.find(
+      (call) =>
+        call.method === "agent" &&
+        (call.params as { message?: string } | undefined)?.message ===
+          "Agent-to-agent announce step.",
     );
+    expect(announceCall).toBeDefined();
   });
 
   it("sessions_send can re-enable channel-bound announce flow and strips NO_REPLY", async () => {

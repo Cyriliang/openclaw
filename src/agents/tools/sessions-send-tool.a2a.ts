@@ -10,9 +10,8 @@ import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { GatewayMessageChannel } from "../../utils/message-channel.js";
 import { AGENT_LANE_NESTED } from "../lanes.js";
 import { readLatestAssistantReply, runAgentStep } from "./agent-step.js";
-import { resolveAnnounceTarget } from "./sessions-announce-target.js";
+import { type AnnounceTargetDecision, resolveAnnounceTarget } from "./sessions-announce-target.js";
 import {
-  type AnnounceTarget,
   buildAgentToAgentAnnounceContext,
   buildAgentToAgentReplyContext,
   isAnnounceSkip,
@@ -31,7 +30,7 @@ export async function runSessionsSendA2AFlow(params: {
   requesterChannel?: GatewayMessageChannel;
   roundOneReply?: string;
   waitRunId?: string;
-  announceTargetResolution?: { kind: "resolved"; target: AnnounceTarget | null };
+  announceTargetResolution?: { kind: "resolved"; decision: AnnounceTargetDecision | null };
 }) {
   const runContextId = params.waitRunId ?? "unknown";
   try {
@@ -58,13 +57,15 @@ export async function runSessionsSendA2AFlow(params: {
       return;
     }
 
-    const announceTarget =
+    const announceTargetDecision =
       params.announceTargetResolution?.kind === "resolved"
-        ? params.announceTargetResolution.target
+        ? params.announceTargetResolution.decision
         : await resolveAnnounceTarget({
             sessionKey: params.targetSessionKey,
             displayKey: params.displayKey,
           });
+    const announceTarget =
+      announceTargetDecision?.kind === "external_target" ? announceTargetDecision.target : null;
     const targetChannel = announceTarget?.channel ?? "unknown";
 
     if (

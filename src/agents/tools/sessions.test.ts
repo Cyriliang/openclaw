@@ -207,16 +207,19 @@ describe("resolveAnnounceTarget", () => {
     await installRegistry();
   });
 
-  it("derives non-WhatsApp announce targets from the session key", async () => {
+  it("classifies key-shaped channel targets as external targets", async () => {
     const target = await resolveAnnounceTarget({
       sessionKey: "agent:main:discord:group:dev",
       displayKey: "agent:main:discord:group:dev",
     });
-    expect(target).toEqual({ channel: "discord", to: "channel:dev" });
+    expect(target).toEqual({
+      kind: "external_target",
+      target: { channel: "discord", to: "channel:dev" },
+    });
     expect(callGatewayMock).not.toHaveBeenCalled();
   });
 
-  it("hydrates WhatsApp accountId from sessions.list when available", async () => {
+  it("classifies sessions.list delivery-context targets as external targets", async () => {
     callGatewayMock.mockResolvedValueOnce({
       sessions: [
         {
@@ -235,9 +238,12 @@ describe("resolveAnnounceTarget", () => {
       displayKey: "agent:main:whatsapp:group:123@g.us",
     });
     expect(target).toEqual({
-      channel: "whatsapp",
-      to: "123@g.us",
-      accountId: "work",
+      kind: "external_target",
+      target: {
+        channel: "whatsapp",
+        to: "123@g.us",
+        accountId: "work",
+      },
     });
     expect(callGatewayMock).toHaveBeenCalledTimes(1);
     const first = callGatewayMock.mock.calls[0]?.[0] as { method?: string } | undefined;
@@ -245,7 +251,44 @@ describe("resolveAnnounceTarget", () => {
     expect(first?.method).toBe("sessions.list");
   });
 
-  it("does not infer announce target from display-only key shape", async () => {
+  it("classifies lastChannel plus lastTo fallback as an external target", async () => {
+    callGatewayMock.mockResolvedValueOnce({
+      sessions: [
+        {
+          key: "main",
+          lastChannel: "discord",
+          lastTo: "channel:history",
+        },
+      ],
+    });
+
+    const target = await resolveAnnounceTarget({
+      sessionKey: "main",
+      displayKey: "main",
+    });
+
+    expect(target).toEqual({
+      kind: "external_target",
+      target: { channel: "discord", to: "channel:history" },
+    });
+    expect(callGatewayMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("classifies matched sessions with no outbound delivery context as no_external_target", async () => {
+    callGatewayMock.mockResolvedValueOnce({
+      sessions: [{ key: "main", displayName: "main" }],
+    });
+
+    const target = await resolveAnnounceTarget({
+      sessionKey: "main",
+      displayKey: "main",
+    });
+
+    expect(target).toEqual({ kind: "no_external_target" });
+    expect(callGatewayMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns unknown when sessions.list misses and only display-key shape is suggestive", async () => {
     callGatewayMock.mockResolvedValueOnce({
       sessions: [],
     });
@@ -254,7 +297,22 @@ describe("resolveAnnounceTarget", () => {
       sessionKey: "main",
       displayKey: "discord:group:dev",
     });
-    expect(target).toBeNull();
+
+    expect(target).toEqual({ kind: "unknown" });
+    expect(callGatewayMock).toHaveBeenCalledTimes(1);
+    const first = callGatewayMock.mock.calls[0]?.[0] as { method?: string } | undefined;
+    expect(first?.method).toBe("sessions.list");
+  });
+
+  it("returns unknown when sessions.list errors and no safe fallback exists", async () => {
+    callGatewayMock.mockRejectedValueOnce(new Error("gateway down"));
+
+    const target = await resolveAnnounceTarget({
+      sessionKey: "main",
+      displayKey: "main",
+    });
+
+    expect(target).toEqual({ kind: "unknown" });
     expect(callGatewayMock).toHaveBeenCalledTimes(1);
     const first = callGatewayMock.mock.calls[0]?.[0] as { method?: string } | undefined;
     expect(first?.method).toBe("sessions.list");
