@@ -619,12 +619,14 @@ function hasDeliverableDirectTarget(origin?: DeliveryContext): origin is Deliver
   return Boolean(channel && to && isDeliverableMessageChannel(channel));
 }
 
+type PendingDescendantRunsResult = { kind: "known"; count: number } | { kind: "unknown" };
+
 async function resolvePendingDescendantRunsForDirectPlan(params: {
   targetRequesterSessionKey: string;
   currentRunId?: string;
   countPendingDescendantRuns?: (sessionKey: string) => number;
   countPendingDescendantRunsExcludingRun?: (sessionKey: string, runId: string) => number;
-}): Promise<number> {
+}): Promise<PendingDescendantRunsResult> {
   const cfg = loadConfig();
   const canonicalRequesterSessionKey = resolveRequesterStoreKey(
     cfg,
@@ -635,14 +637,23 @@ async function resolvePendingDescendantRunsForDirectPlan(params: {
       const countExcludingRun =
         params.countPendingDescendantRunsExcludingRun ??
         (await loadSubagentRegistryRuntime()).countPendingDescendantRunsExcludingRun;
-      return Math.max(0, countExcludingRun(canonicalRequesterSessionKey, params.currentRunId));
+      return {
+        kind: "known",
+        count: Math.max(0, countExcludingRun(canonicalRequesterSessionKey, params.currentRunId)),
+      };
     }
     const countPendingRuns =
       params.countPendingDescendantRuns ??
       (await loadSubagentRegistryRuntime()).countPendingDescendantRuns;
-    return Math.max(0, countPendingRuns(canonicalRequesterSessionKey));
-  } catch {
-    return 0;
+    return {
+      kind: "known",
+      count: Math.max(0, countPendingRuns(canonicalRequesterSessionKey)),
+    };
+  } catch (error) {
+    defaultRuntime.log(
+      `[debug] Subagent descendant counting failed, failing closed for completion delivery: requester=${canonicalRequesterSessionKey} run=${params.currentRunId ?? "none"} error=${summarizeDeliveryError(error)}`,
+    );
+    return { kind: "unknown" };
   }
 }
 
@@ -698,7 +709,7 @@ async function buildSubagentDirectDeliveryPlan(params: {
 
   const hasCompletionTarget = hasDeliverableDirectTarget(completionDirectOrigin);
   const hasExternalDirectTarget = hasDeliverableDirectTarget(effectiveDirectOrigin);
-  const pendingDescendantRuns =
+  const pendingDescendantRunsResult =
     params.expectsCompletionMessage && hasCompletionTarget
       ? await resolvePendingDescendantRunsForDirectPlan({
           targetRequesterSessionKey: params.targetRequesterSessionKey,
@@ -706,7 +717,9 @@ async function buildSubagentDirectDeliveryPlan(params: {
           countPendingDescendantRuns: params.countPendingDescendantRuns,
           countPendingDescendantRunsExcludingRun: params.countPendingDescendantRunsExcludingRun,
         })
-      : 0;
+      : { kind: "known", count: 0 };
+  const pendingDescendantRuns =
+    pendingDescendantRunsResult.kind === "known" ? pendingDescendantRunsResult.count : 0;
   const forceBoundSessionDirectDelivery =
     params.spawnMode === "session" &&
     (params.completionRouteMode === "bound" || params.completionRouteMode === "hook");
@@ -714,6 +727,17 @@ async function buildSubagentDirectDeliveryPlan(params: {
 
   if (params.expectsCompletionMessage && hasCompletionTarget) {
     const trimmedCompletionMessage = params.completionMessage?.trim();
+    // If descendant state is unknown, stay internal rather than risk re-enabling external delivery.
+    if (
+      pendingDescendantRunsResult.kind === "unknown" &&
+      !forceBoundSessionDirectDelivery &&
+      !forceCronDirectDelivery
+    ) {
+      return {
+        kind: "agent_internal_only",
+        origin: completionDirectOrigin,
+      };
+    }
     if (
       trimmedCompletionMessage &&
       !forceBoundSessionDirectDelivery &&

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { defaultRuntime } from "../runtime.js";
 import {
   mapQueueOutcomeToDeliveryResult,
   runSubagentAnnounceDispatch,
@@ -228,6 +229,88 @@ describe("runSubagentAnnounceDispatch", () => {
       target: { channel: "discord", to: "channel:12345", accountId: "acct-1" },
       message: "final answer: 2",
     });
+  });
+
+  it("fails closed when descendant counting throws during completion planning", async () => {
+    const excludeCurrentRun = vi.fn(() => {
+      throw new Error("registry unavailable");
+    });
+
+    const plan = await subagentAnnounceTesting.buildSubagentDirectDeliveryPlan({
+      targetRequesterSessionKey: "agent:main:main",
+      expectsCompletionMessage: true,
+      requesterIsSubagent: false,
+      completionDirectOrigin: { channel: "discord", to: "channel:12345", accountId: "acct-1" },
+      completionMessage: "final answer: 2",
+      completionRouteMode: "fallback",
+      currentRunId: "run-child-error",
+      countPendingDescendantRuns: vi.fn(() => 7),
+      countPendingDescendantRunsExcludingRun: excludeCurrentRun,
+    });
+
+    expect(excludeCurrentRun).toHaveBeenCalledWith("agent:main:main", "run-child-error");
+    expect(plan).toEqual({
+      kind: "agent_internal_only",
+      origin: { channel: "discord", to: "channel:12345", accountId: "acct-1" },
+    });
+  });
+
+  it("fails closed before agent_external fallback when completion direct target is deliverable but message is empty", async () => {
+    const excludeCurrentRun = vi.fn(() => {
+      throw new Error("registry unavailable");
+    });
+
+    const plan = await subagentAnnounceTesting.buildSubagentDirectDeliveryPlan({
+      targetRequesterSessionKey: "agent:main:main",
+      expectsCompletionMessage: true,
+      requesterIsSubagent: false,
+      completionDirectOrigin: { channel: "discord", to: "channel:12345", accountId: "acct-1" },
+      completionMessage: "   ",
+      completionRouteMode: "fallback",
+      currentRunId: "run-child-error-empty-message",
+      countPendingDescendantRuns: vi.fn(() => 7),
+      countPendingDescendantRunsExcludingRun: excludeCurrentRun,
+    });
+
+    expect(excludeCurrentRun).toHaveBeenCalledWith(
+      "agent:main:main",
+      "run-child-error-empty-message",
+    );
+    expect(plan).toEqual({
+      kind: "agent_internal_only",
+      origin: { channel: "discord", to: "channel:12345", accountId: "acct-1" },
+    });
+  });
+
+  it("logs when descendant counting fails closed during completion planning", async () => {
+    const excludeCurrentRun = vi.fn(() => {
+      throw new Error("registry unavailable");
+    });
+    const runtimeLog = vi.spyOn(defaultRuntime, "log").mockImplementation(() => {});
+
+    try {
+      await subagentAnnounceTesting.buildSubagentDirectDeliveryPlan({
+        targetRequesterSessionKey: "agent:main:main",
+        expectsCompletionMessage: true,
+        requesterIsSubagent: false,
+        completionDirectOrigin: { channel: "discord", to: "channel:12345", accountId: "acct-1" },
+        completionMessage: "final answer: 2",
+        completionRouteMode: "fallback",
+        currentRunId: "run-child-error-log",
+        countPendingDescendantRuns: vi.fn(() => 7),
+        countPendingDescendantRunsExcludingRun: excludeCurrentRun,
+      });
+
+      expect(runtimeLog).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Subagent descendant counting failed, failing closed for completion delivery",
+        ),
+      );
+      expect(runtimeLog).toHaveBeenCalledWith(expect.stringContaining("requester=agent:main:main"));
+      expect(runtimeLog).toHaveBeenCalledWith(expect.stringContaining("run=run-child-error-log"));
+    } finally {
+      runtimeLog.mockRestore();
+    }
   });
 
   it("canonicalizes requester key before descendant counting", async () => {
