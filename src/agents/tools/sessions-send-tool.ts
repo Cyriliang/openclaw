@@ -11,7 +11,7 @@ import {
 import { AGENT_LANE_NESTED } from "../lanes.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readStringParam } from "./common.js";
-import { resolveAnnounceTarget } from "./sessions-announce-target.js";
+import { type AnnounceTargetDecision, resolveAnnounceTarget } from "./sessions-announce-target.js";
 import {
   createSessionVisibilityGuard,
   createAgentToAgentPolicy,
@@ -238,25 +238,40 @@ export function createSessionsSendTool(opts?: {
       const maxPingPongTurns = resolvePingPongTurns(cfg);
       const allowChannelBoundAnnounce =
         cfg?.session?.agentToAgent?.allowChannelBoundAnnounce === true;
-      const announceTargetDecision = allowChannelBoundAnnounce
+      const announceTargetDecisionTask = allowChannelBoundAnnounce
         ? null
-        : await resolveAnnounceTarget({
-            sessionKey: resolvedKey,
-            displayKey,
-          });
-      const runA2AAnnounceFlow =
-        allowChannelBoundAnnounce || announceTargetDecision?.kind === "no_external_target";
-      const announceTargetResolution = allowChannelBoundAnnounce
-        ? undefined
-        : ({ kind: "resolved", decision: announceTargetDecision } as const);
-      const delivery = {
-        status: runA2AAnnounceFlow ? ("pending" as const) : ("skipped" as const),
-        mode: runA2AAnnounceFlow ? ("announce" as const) : ("none" as const),
+        : (() => {
+            let settledDecision: AnnounceTargetDecision | undefined;
+            const promise = resolveAnnounceTarget({
+              sessionKey: resolvedKey,
+              displayKey,
+            })
+              .catch(() => ({ kind: "unknown", reason: "error" }) satisfies AnnounceTargetDecision)
+              .then((decision) => {
+                settledDecision = decision;
+                return decision;
+              });
+            return {
+              promise,
+              getSettledDecision: () => settledDecision,
+            };
+          })();
+      const resolveAnnounceDelivery = (decision?: AnnounceTargetDecision | null) => {
+        const runA2AAnnounceFlow =
+          allowChannelBoundAnnounce || decision?.kind === "no_external_target";
+        return {
+          runA2AAnnounceFlow,
+          delivery: {
+            status: runA2AAnnounceFlow ? ("pending" as const) : ("skipped" as const),
+            mode: runA2AAnnounceFlow ? ("announce" as const) : ("none" as const),
+          },
+        };
       };
-      const startA2AFlow = (roundOneReply?: string, waitRunId?: string) => {
-        if (!runA2AAnnounceFlow) {
-          return;
-        }
+      const launchA2AFlow = (
+        roundOneReply?: string,
+        waitRunId?: string,
+        decision?: AnnounceTargetDecision | null,
+      ) => {
         void runSessionsSendA2AFlow({
           targetSessionKey: resolvedKey,
           displayKey,
@@ -267,8 +282,31 @@ export function createSessionsSendTool(opts?: {
           requesterChannel,
           roundOneReply,
           waitRunId,
-          announceTargetResolution,
+          announceTargetResolution: allowChannelBoundAnnounce
+            ? undefined
+            : ({ kind: "resolved", decision: decision ?? null } as const),
           allowChannelBoundAnnounce,
+        });
+      };
+      const scheduleA2AFlow = (roundOneReply?: string, waitRunId?: string) => {
+        if (allowChannelBoundAnnounce) {
+          launchA2AFlow(roundOneReply, waitRunId, null);
+          return;
+        }
+        const settledDecision = announceTargetDecisionTask?.getSettledDecision();
+        if (settledDecision !== undefined) {
+          if (resolveAnnounceDelivery(settledDecision).runA2AAnnounceFlow) {
+            launchA2AFlow(roundOneReply, waitRunId, settledDecision);
+          }
+          return;
+        }
+        if (!announceTargetDecisionTask) {
+          return;
+        }
+        void announceTargetDecisionTask.promise.then((decision) => {
+          if (resolveAnnounceDelivery(decision).runA2AAnnounceFlow) {
+            launchA2AFlow(roundOneReply, waitRunId, decision);
+          }
         });
       };
 
@@ -282,7 +320,17 @@ export function createSessionsSendTool(opts?: {
           if (typeof response?.runId === "string" && response.runId) {
             runId = response.runId;
           }
-          startA2AFlow(undefined, runId);
+          const settledDecision = allowChannelBoundAnnounce
+            ? null
+            : (announceTargetDecisionTask?.getSettledDecision() ?? undefined);
+          const delivery =
+            allowChannelBoundAnnounce || settledDecision !== undefined
+              ? resolveAnnounceDelivery(settledDecision ?? null).delivery
+              : {
+                  status: "pending" as const,
+                  mode: "announce" as const,
+                };
+          scheduleA2AFlow(undefined, runId);
           return jsonResult({
             runId,
             status: "accepted",
@@ -369,7 +417,15 @@ export function createSessionsSendTool(opts?: {
       const filtered = stripToolMessages(Array.isArray(history?.messages) ? history.messages : []);
       const last = filtered.length > 0 ? filtered[filtered.length - 1] : undefined;
       const reply = last ? extractAssistantText(last) : undefined;
-      startA2AFlow(reply ?? undefined);
+      const announceTargetDecision = allowChannelBoundAnnounce
+        ? null
+        : await announceTargetDecisionTask?.promise;
+      const { runA2AAnnounceFlow, delivery } = resolveAnnounceDelivery(
+        announceTargetDecision ?? null,
+      );
+      if (runA2AAnnounceFlow) {
+        launchA2AFlow(reply ?? undefined, undefined, announceTargetDecision ?? null);
+      }
 
       return jsonResult({
         runId,

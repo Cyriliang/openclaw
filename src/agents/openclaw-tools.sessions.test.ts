@@ -731,6 +731,86 @@ describe("sessions tools", () => {
     expect(sendCallCount).toBe(0);
   });
 
+  it("sessions_send fire-and-forget does not block primary delivery on announce precheck", async () => {
+    const calls: Array<{ method?: string; params?: unknown }> = [];
+    let resolveSessionsList:
+      | ((value: { sessions: Array<Record<string, unknown>> }) => void)
+      | undefined;
+    const pendingSessionsList = new Promise<{ sessions: Array<Record<string, unknown>> }>(
+      (resolve) => {
+        resolveSessionsList = resolve;
+      },
+    );
+
+    callGatewayMock.mockImplementation(async (opts: unknown) => {
+      const request = opts as { method?: string; params?: unknown };
+      calls.push(request);
+      if (request.method === "agent") {
+        return {
+          runId: "run-precheck",
+          status: "accepted",
+          acceptedAt: 2001,
+        };
+      }
+      if (request.method === "sessions.list") {
+        return await pendingSessionsList;
+      }
+      if (request.method === "send") {
+        throw new Error("send should not be called for default channel-bound targets");
+      }
+      return {};
+    });
+
+    const tool = createOpenClawTools({
+      agentSessionKey: "discord:group:req",
+      agentChannel: "discord",
+    }).find((candidate) => candidate.name === "sessions_send");
+    expect(tool).toBeDefined();
+    if (!tool) {
+      throw new Error("missing sessions_send tool");
+    }
+
+    let settled = false;
+    const firePromise = tool
+      .execute("call-precheck-not-critical", {
+        sessionKey: "main",
+        message: "ping",
+        timeoutSeconds: 0,
+      })
+      .then((value) => {
+        settled = true;
+        return value;
+      });
+
+    await waitForCalls(() => calls.filter((call) => call.method === "agent").length, 1);
+    await vi.waitFor(() => {
+      expect(settled).toBe(true);
+    });
+
+    const fire = await firePromise;
+    expect(fire.details).toMatchObject({
+      status: "accepted",
+      runId: "run-precheck",
+    });
+    expect(calls.filter((call) => call.method === "agent.wait")).toHaveLength(0);
+
+    resolveSessionsList?.({
+      sessions: [
+        {
+          key: "main",
+          deliveryContext: {
+            channel: "discord",
+            to: "channel:target",
+          },
+        },
+      ],
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(calls.filter((call) => call.method === "agent")).toHaveLength(1);
+    expect(calls.filter((call) => call.method === "send")).toHaveLength(0);
+  });
+
   it("sessions_send resolves sessionId inputs", async () => {
     const sessionId = "sess-send";
     const targetKey = "agent:main:discord:channel:123";
