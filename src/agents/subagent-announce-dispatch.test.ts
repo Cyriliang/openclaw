@@ -326,6 +326,45 @@ describe("runSubagentAnnounceDispatch", () => {
     });
   });
 
+  it("strips trailing completion control markers before direct send", async () => {
+    const excludeCurrentRun = vi.fn(() => 0);
+
+    const noReplyPlan = await subagentAnnounceTesting.buildSubagentDirectDeliveryPlan({
+      targetRequesterSessionKey: "agent:main:main",
+      expectsCompletionMessage: true,
+      requesterIsSubagent: false,
+      completionDirectOrigin: { channel: "discord", to: "channel:12345", accountId: "acct-1" },
+      completionMessage: "final answer NO_REPLY",
+      completionRouteMode: "fallback",
+      currentRunId: "run-child-strip-no-reply",
+      countPendingDescendantRuns: vi.fn(() => 7),
+      countPendingDescendantRunsExcludingRun: excludeCurrentRun,
+    });
+
+    const skipPlan = await subagentAnnounceTesting.buildSubagentDirectDeliveryPlan({
+      targetRequesterSessionKey: "agent:main:main",
+      expectsCompletionMessage: true,
+      requesterIsSubagent: false,
+      completionDirectOrigin: { channel: "discord", to: "channel:12345", accountId: "acct-1" },
+      completionMessage: "final answer ANNOUNCE_SKIP",
+      completionRouteMode: "fallback",
+      currentRunId: "run-child-strip-skip",
+      countPendingDescendantRuns: vi.fn(() => 7),
+      countPendingDescendantRunsExcludingRun: excludeCurrentRun,
+    });
+
+    expect(noReplyPlan).toEqual({
+      kind: "completion_direct_send",
+      target: { channel: "discord", to: "channel:12345", accountId: "acct-1" },
+      message: "final answer",
+    });
+    expect(skipPlan).toEqual({
+      kind: "completion_direct_send",
+      target: { channel: "discord", to: "channel:12345", accountId: "acct-1" },
+      message: "final answer",
+    });
+  });
+
   it("fails closed when descendant counting throws during completion planning", async () => {
     const excludeCurrentRun = vi.fn(() => {
       throw new Error("registry unavailable");

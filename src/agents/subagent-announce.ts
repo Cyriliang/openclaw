@@ -1,5 +1,5 @@
 import { resolveQueueSettings } from "../auto-reply/reply/queue.js";
-import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
+import { isSilentReplyText, SILENT_REPLY_TOKEN, stripSilentToken } from "../auto-reply/tokens.js";
 import { DEFAULT_SUBAGENT_MAX_SPAWN_DEPTH } from "../config/agent-limits.js";
 import { loadConfig } from "../config/config.js";
 import {
@@ -672,6 +672,20 @@ function buildCompletionDirectMessage(params: {
   return `${params.statusLabel}\n\n${trimmedFindings}`;
 }
 
+function normalizeCompletionDirectMessage(message?: string): string {
+  let normalized = message?.trim() ?? "";
+  while (normalized) {
+    const stripped = stripSilentToken(normalized, SILENT_REPLY_TOKEN)
+      .replace(/(?:^|\s+|\*+)ANNOUNCE_SKIP\s*$/, "")
+      .trim();
+    if (stripped === normalized) {
+      return stripped;
+    }
+    normalized = stripped;
+  }
+  return normalized;
+}
+
 async function buildSubagentDirectDeliveryPlan(params: {
   targetRequesterSessionKey: string;
   directOrigin?: DeliveryContext;
@@ -726,7 +740,7 @@ async function buildSubagentDirectDeliveryPlan(params: {
   const forceCronDirectDelivery = params.announceType === "cron job";
 
   if (params.expectsCompletionMessage && hasCompletionTarget) {
-    const trimmedCompletionMessage = params.completionMessage?.trim();
+    const trimmedCompletionMessage = normalizeCompletionDirectMessage(params.completionMessage);
     // If descendant state is unknown, stay internal rather than risk re-enabling external delivery.
     if (
       pendingDescendantRunsResult.kind === "unknown" &&
