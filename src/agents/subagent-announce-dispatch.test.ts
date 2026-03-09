@@ -208,6 +208,101 @@ describe("runSubagentAnnounceDispatch", () => {
     });
   });
 
+  it("keeps hook completion delivery external even when siblings are still pending", async () => {
+    const excludeCurrentRun = vi.fn(() => 2);
+
+    const plan = await subagentAnnounceTesting.buildSubagentDirectDeliveryPlan({
+      targetRequesterSessionKey: "agent:main:main",
+      expectsCompletionMessage: true,
+      requesterIsSubagent: false,
+      completionDirectOrigin: {
+        channel: "discord",
+        to: "channel:hook-bound-1",
+        accountId: "acct-1",
+      },
+      completionMessage: "hook final answer",
+      completionRouteMode: "hook",
+      spawnMode: "session",
+      currentRunId: "run-hook-1",
+      countPendingDescendantRuns: vi.fn(() => 5),
+      countPendingDescendantRunsExcludingRun: excludeCurrentRun,
+    });
+
+    expect(excludeCurrentRun).toHaveBeenCalledWith("agent:main:main", "run-hook-1");
+    expect(plan).toEqual({
+      kind: "agent_external",
+      origin: {
+        channel: "discord",
+        to: "channel:hook-bound-1",
+        accountId: "acct-1",
+      },
+    });
+  });
+
+  it("keeps hook completion delivery external when descendant counting is unknown", async () => {
+    const excludeCurrentRun = vi.fn(() => {
+      throw new Error("registry unavailable");
+    });
+
+    const plan = await subagentAnnounceTesting.buildSubagentDirectDeliveryPlan({
+      targetRequesterSessionKey: "agent:main:main",
+      expectsCompletionMessage: true,
+      requesterIsSubagent: false,
+      completionDirectOrigin: {
+        channel: "discord",
+        to: "channel:hook-bound-error",
+        accountId: "acct-1",
+      },
+      completionMessage: "hook final answer",
+      completionRouteMode: "hook",
+      spawnMode: "session",
+      currentRunId: "run-hook-error",
+      countPendingDescendantRuns: vi.fn(() => 7),
+      countPendingDescendantRunsExcludingRun: excludeCurrentRun,
+    });
+
+    expect(excludeCurrentRun).toHaveBeenCalledWith("agent:main:main", "run-hook-error");
+    expect(plan).toEqual({
+      kind: "agent_external",
+      origin: {
+        channel: "discord",
+        to: "channel:hook-bound-error",
+        accountId: "acct-1",
+      },
+    });
+  });
+
+  it("does not treat hook completion delivery as bound-like outside session mode", async () => {
+    const excludeCurrentRun = vi.fn(() => 2);
+
+    const plan = await subagentAnnounceTesting.buildSubagentDirectDeliveryPlan({
+      targetRequesterSessionKey: "agent:main:main",
+      expectsCompletionMessage: true,
+      requesterIsSubagent: false,
+      completionDirectOrigin: {
+        channel: "discord",
+        to: "channel:hook-run-1",
+        accountId: "acct-1",
+      },
+      completionMessage: "hook run final answer",
+      completionRouteMode: "hook",
+      spawnMode: "run",
+      currentRunId: "run-hook-nonsession",
+      countPendingDescendantRuns: vi.fn(() => 5),
+      countPendingDescendantRunsExcludingRun: excludeCurrentRun,
+    });
+
+    expect(excludeCurrentRun).toHaveBeenCalledWith("agent:main:main", "run-hook-nonsession");
+    expect(plan).toEqual({
+      kind: "agent_internal_only",
+      origin: {
+        channel: "discord",
+        to: "channel:hook-run-1",
+        accountId: "acct-1",
+      },
+    });
+  });
+
   it("keeps completion direct-send reachable once descendants are settled", async () => {
     const excludeCurrentRun = vi.fn(() => 0);
 
